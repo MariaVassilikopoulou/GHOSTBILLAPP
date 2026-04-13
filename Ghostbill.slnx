@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/backend/" />
+  <Folder Name="/backend/src/">
+    <Project Path="backend/src/Ghostbill.Api/Ghostbill.Api.csproj" />
+  </Folder>
+  <Folder Name="/backend/tests/">
+    <Project Path="backend/tests/Ghostbill.Api.Tests/Ghostbill.Api.Tests.csproj" />
+  </Folder>
+</Solution>
