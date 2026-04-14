@@ -9,6 +9,11 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Port binding (Railway injects PORT env var) ────────────────────────────
+var port = Environment.GetEnvironmentVariable("PORT");
+if (port is not null)
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
 // ── File size limit ────────────────────────────────────────────────────────
 var maxFileSizeMb = builder.Configuration.GetValue<int>("Upload:MaxFileSizeMb", 10);
 var maxFileSizeBytes = maxFileSizeMb * 1024 * 1024;
@@ -67,7 +72,7 @@ var app = builder.Build();
 app.Services.GetRequiredService<ParserResolutionService>().ValidateConfiguration();
 
 // ── Middleware pipeline ────────────────────────────────────────────────────
-app.UseHttpsRedirection();
+// HTTPS redirection is handled by Railway's proxy — skip it here
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthorization();
