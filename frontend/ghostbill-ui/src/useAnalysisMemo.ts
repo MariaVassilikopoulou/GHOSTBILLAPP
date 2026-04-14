@@ -35,8 +35,8 @@ export function useAnalysisMemo(result: AnalysisResult | null, prevGhostNames: S
         priceDrift: group.trend.length >= 2
           ? Math.round(((group.trend[group.trend.length - 1].amount - group.trend[0].amount) / group.trend[0].amount) * 100)
           : 0,
-        isNewGhost: group.classification === "ghost" && group.trend.length > 0
-          ? (Date.now() - new Date(group.trend[0].date).getTime()) / (1000 * 60 * 60 * 24) <= 60
+        isNewGhost: group.classification === "ghost"
+          ? (Date.now() - new Date(group.firstChargeDate).getTime()) / (1000 * 60 * 60 * 24) <= 60
           : false,
         isNewThisUpload: group.classification === "ghost"
           && prevGhostNames.size > 0
