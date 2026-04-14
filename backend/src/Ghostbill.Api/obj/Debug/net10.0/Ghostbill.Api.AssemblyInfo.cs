@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Ghostbill.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ece13da2629c71a05a98858319883da3f1863e00")]
 [assembly: System.Reflection.AssemblyProductAttribute("Ghostbill.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Ghostbill.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

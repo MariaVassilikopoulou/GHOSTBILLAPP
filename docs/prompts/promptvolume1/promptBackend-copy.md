@@ -35,17 +35,17 @@ You are a backend developer extending the Ghostbill ASP.NET Core API. Your task 
 
 ## Product Context
 
-Ghostbill helps users upload a transaction export or bank statement and understand which recurring outgoing charges look forgotten versus expected.
+Ghostbill helps users upload a transaction export or bank statement and understand which repeated outgoing charges look forgotten versus expected.
 
 **User-facing intent:**
 - Accept `.csv`, `.xlsx`, `.json`, and text-based machine-readable `.pdf` through one consistent analysis pipeline
-- Surface recurring outgoing charges as **Ghosts** (forgotten subscriptions) or **Regulars** (expected bills)
+- Surface repeated outgoing charges as **Ghosts** (forgotten subscriptions) or **Regulars** (expected bills)
 - Return equivalent results for equivalent data regardless of input format
 
 **Scope boundaries:**
-- Only outgoing expense transactions influence recurring-expense analysis
+- Only outgoing expense transactions influence repeated-expense analysis
 - Credits, income, refunds, and positive cash-flow entries are excluded — they must not affect Ghost/Regular classification
-- The recurring pattern matters, not isolated one-off transactions
+- The repeated pattern matters, not isolated one-off transactions
 - "Ghost" = likely forgotten or overlooked, not fraudulent
 - Do not add budgeting, income-tracking, or savings-analysis behavior
 - Do not imply OCR support
@@ -174,7 +174,14 @@ All paths are relative to `backend/src/Ghostbill.Api/`.
 ## Component Specifications
 
 ### `ITransactionFileParser` (#1)
-**Does:** defines parser contract (`CanHandle(extension)`, `Parse(stream)`).
+**Does:** defines parser contract. Exact interface (do not alter signatures):
+```csharp
+public interface ITransactionFileParser
+{
+    bool CanHandle(string extension);
+    IReadOnlyList<Transaction> Parse(Stream stream, string fileName);
+}
+```
 **Must NOT:** contain parsing logic, business logic, or parser resolution.
 
 ### `ParserResolutionService` (#2)
@@ -196,15 +203,33 @@ All paths are relative to `backend/src/Ghostbill.Api/`.
 **Must NOT:** transform, filter, reorder, reinterpret, normalize, or remap CSV output in any way.
 
 ### `ExcelParsingService` (#4)
-**Does:** reads first worksheet via ClosedXML. Converts row/cell values to `List<string[]>`. Uses shared helpers for header detection, column mapping, value parsing, and row materialization. Returns `ParseResult`.
+**Does:** reads first worksheet via ClosedXML. Uses shared helpers for header detection, column mapping, value parsing, and row materialization.
+
+Required ClosedXML access pattern (exact — deviations produce wrong output):
+```
+Open:        new XLWorkbook(stream)
+Worksheet:   workbook.Worksheet(1)          ← 1-based index
+Used range:  worksheet.RangeUsed()          ← null if empty → return []
+Rows:        range.RowsUsed()               ← automatically skips empty rows
+Cell values: cell.GetFormattedString()      ← NOT .Value?.ToString()
+```
+
 **Must NOT:** perform business logic, call analysis services, or introduce format-specific analysis branching.
 
 ### `JsonParsingService` (#5)
-**Does:** reads UTF-8 or UTF-8 BOM JSON. Supports exactly two JSON root shapes:
-- Top-level array of transaction-like objects
-- Top-level object with a `transactions` array
+**Does:** reads JSON, maps property aliases to Transaction objects directly — does NOT use `RowMaterializationService`.
 
-Maps deterministic property aliases to the shared transaction model. Returns `ParseResult`.
+Required implementation pattern:
+```
+Stream reading: new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true)
+  ← handles BOM automatically; no manual stripping needed
+Number amounts: element.GetDecimal().ToString(CultureInfo.InvariantCulture) before ParseAmount
+Missing required property alias → throw PARSE_ERROR (does NOT skip the record)
+```
+
+Supports exactly two JSON root shapes (property name matching is **case-insensitive**):
+- Top-level array of transaction objects
+- Top-level object with a `transactions` array
 
 **JSON property aliases:**
 
@@ -214,7 +239,7 @@ Maps deterministic property aliases to the shared transaction model. Returns `Pa
 | Description | `description`, `text`, `merchant`, `name` |
 | Amount | `amount`, `value` |
 
-**Must NOT:** guess arbitrary nested JSON structures, perform business logic, or use non-deterministic field matching. Unsupported shapes → `PARSE_ERROR`.
+**Must NOT:** guess arbitrary nested JSON structures, use `RowMaterializationService`, perform business logic, or use non-deterministic field matching. Unsupported shapes → `PARSE_ERROR`.
 
 ### `PdfParsingService` (#6) — Orchestrator Only
 **Does:**
@@ -287,6 +312,105 @@ Cultures: invariant, `sv-SE`, `en-US`.
 Handles currency symbols (`$`, `€`, `£`), parentheses for negatives `(100.00) = -100.00`, locale-aware decimal/thousand separators.
 
 **Must NOT** (all shared helpers): depend on `CsvParsingService`, be injected into CSV parser internals, or contain analysis logic.
+
+---
+
+## Parsing Reference Specification
+
+These values are authoritative. Implement exactly as stated — do not infer or substitute.
+
+### Encoding Handling
+Apply to all text-based parsers (XLSX and JSON; CSV is frozen):
+- Try UTF-8 with strict validation: `new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)`
+- On `DecoderFallbackException` → retry as Windows-1252: `Encoding.GetEncoding(1252)`
+- Register `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` before first use
+- XLSX: ClosedXML handles encoding internally — no action needed
+- PDF: PdfPig extracts Unicode text — no action needed
+
+### Headerless File Fallback
+Applies to XLSX and CSV (CSV is frozen; this documents the expected pattern for XLSX):
+- If `HeaderDetectionService` returns `null` → fall back to positional mapping: column 0 = Date, column 1 = Description, column 2 = Amount
+- If the row has fewer than 3 columns → throw `PARSE_ERROR`
+- Do NOT throw just because no header is detected
+- JSON: no header concept; property-name mapping always applies regardless
+
+### Row Materialization Failure Policy (`RowMaterializationService`)
+- Unparseable date or amount → catch `FormatException` → skip that row → record reason in `skippedReasons`
+- Missing description → use empty string; do not skip the row
+- Never throw on a single bad row; always continue processing remaining rows
+- Return the `skippedReasons` list in `RowMaterializationResult` for debug logging
+
+### JSON Root Shapes — Exact Contract
+Exactly two supported shapes. Property name matching is **case-insensitive**. Any other root shape → `PARSE_ERROR`.
+
+Shape A — top-level array:
+```json
+[
+  { "date": "2024-01-15", "description": "Netflix", "amount": -149.00 }
+]
+```
+
+Shape B — top-level object with `transactions` key:
+```json
+{
+  "transactions": [
+    { "date": "2024-01-15", "description": "Netflix", "amount": -149.00 }
+  ]
+}
+```
+
+### `PdfRowFilter` — Exact Token Lists
+All values are applied **after** `HeaderNormalization.Normalize()` (lowercase + trim + diacritic-strip).
+
+| Method | Match type | Tokens |
+|--------|-----------|--------|
+| `LooksLikeHeader` | Exact | `beskrivning`, `referens`, `belopp`, `bokfortsaldo`, `transaktionsdag`, `bokforingsdag`, `valutadag` |
+| `LooksLikeNoise` | Prefix | `saldo`, `kontohavare`, `privatkonto`, `transaktioner`, `skapad` |
+| `LooksLikeNoise` | Exact | `sek` |
+
+### PDF Strategy Constants and Regex Patterns (Exact — Required for Correct Extraction)
+
+#### `ColumnLayoutPdfStrategy` — Bounding-Box Constants
+```
+RowTolerance      = 2.5   // Y-coordinate grouping tolerance (pixels)
+
+BookingDateLeft   = 145,  BookingDateRight   = 205
+TransactionDateLeft = 205, TransactionDateRight = 260
+ValueDateLeft     = 260,  ValueDateRight     = 312
+DescriptionLeft   = 312,  DescriptionRight   = 438
+AmountLeft        = 438,  AmountRight        = 490
+
+Word filter: include only words where BoundingBox.Left >= BookingDateLeft - 4 (i.e., >= 141)
+```
+
+Date column priority: use `transactionDate` first, then `bookingDate`, then `valueDate` (`FirstNonEmpty`).
+
+Date validation regex (row accepted only if extracted date matches):
+```
+^\d{4}-\d{2}-\d{2}$
+```
+
+#### `SequentialTablePdfStrategy` — Regex Patterns
+```
+AnyDateRegex (anchor — find first date to start parsing):
+\d{4}-\d{2}-\d{2}
+
+SequentialRecordRegex (named groups: date, description, amount):
+(?<date>\d{4}-\d{2}-\d{2})(?<description>.*?)(?<transactionId>TXN\d+)(?<type>Debit|Credit)(?<amount>[\+\-]?\d[\d,\.]*)(?<currency>[A-Z]{3})(?<balance>[\+\-]?\d[\d,\.]*)(?=(?:\d{4}-\d{2}-\d{2})|$)
+```
+
+#### `RegexRowPdfStrategy` — Regex Patterns
+Two passes per page: once on raw lines, once on whitespace-normalized full-page text.
+
+```
+WhitespaceRegex (normalization before second pass):
+\s+   → replace with single space
+
+TransactionLineRegex (named groups: date, description, amount):
+(?<date>\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|[A-Za-z]{3}\s+\d{1,2},?\s+\d{4})\s+(?<description>[A-Za-z][A-Za-z\s&'\-]+?)\s+(?<amount>\(?-?[$€£]?\d[\d,\.]*\)?)\s*(?=(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|[A-Za-z]{3}\s+\d{1,2},?\s+\d{4})|$)
+```
+
+All regex patterns must use `[GeneratedRegex]` source generation. Strategy classes must be `sealed partial class`.
 
 ---
 

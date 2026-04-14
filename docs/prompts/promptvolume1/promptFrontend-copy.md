@@ -1,7 +1,7 @@
 # Frontend Implementation Prompt — Ghostbill
 
 ## Role
-You are a frontend developer implementing the Ghostbill UI in React + TypeScript + Vite + plain CSS. Your task is to build a polished, performant upload-and-results interface that communicates recurring expense insights clearly to the user.
+You are a frontend developer implementing the Ghostbill UI in React + TypeScript + Vite + plain CSS. Your task is to build a polished, performant upload-and-results interface that communicates repeated expense insights clearly to the user.
 
 ---
 
@@ -24,9 +24,9 @@ Simplicity > abstraction
 ## Product Context
 
 ### What Ghostbill Does
-Ghostbill is an expense-awareness tool — not a budgeting app or income tracker. Users upload a bank export file. The backend analyzes recurring outgoing charges and classifies them as:
-- **Ghosts** — recurring charges with consistent timing and amount, likely forgotten subscriptions
-- **Regulars** — recurring charges with expected variation, such as utilities or rent
+Ghostbill is an expense-awareness tool — not a budgeting app or income tracker. Users upload a bank export file. The backend analyzes repeated outgoing charges and classifies them as:
+- **Ghosts** — repeated charges with consistent timing and amount, likely forgotten subscriptions
+- **Regulars** — repeated charges with expected variation, such as utilities or rent
 
 ### User Journey
 1. Select or drag in a supported file: `.csv`, `.xlsx`, `.json`, or text-based `.pdf`
@@ -36,7 +36,7 @@ Ghostbill is an expense-awareness tool — not a budgeting app or income tracker
 5. Reset and upload another file if needed
 
 ### What the UI Must Communicate
-- "Ghost" = likely forgotten recurring charge, not fraud
+- "Ghost" = likely forgotten repeated charge, not fraud
 - Ghostbill focuses on **outgoing expenses** — income and credits are excluded
 - The `totalTransactionsAnalyzed` count reflects only outgoing transactions; it will be lower than the file's total row count
 - Unsupported or unparseable files must fail clearly with an actionable message
@@ -229,8 +229,8 @@ Skeleton placeholders for all three cards during loading.
 
 Rendered below the merchant list whenever `result` is present.
 
-- **Heading:** "Recent recurring charges"
-- **Content:** the 8 most recent transactions from all recurring groups (ghosts + regulars combined), sorted by `transaction.date` descending
+- **Heading:** "Recent repeated charges"
+- **Content:** the 8 most recent transactions from all repeated groups (ghosts + regulars combined), sorted by `transaction.date` descending
 - **Each card:** merchant name · amount in SEK (absolute value) · date as "MMM D" (e.g. "Jan 5") in user's local timezone
 - **Layout:** horizontal scrollable card grid
 - Do not render this panel when there are no results

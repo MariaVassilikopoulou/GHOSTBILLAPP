@@ -3,7 +3,7 @@
 ## Role
 You are a fullstack developer implementing the complete Ghostbill application. This prompt is self-contained and authoritative — follow it entirely. It supersedes the specialized backend and frontend prompts where they conflict.
 
-Your task: build or extend Ghostbill so it accepts transaction files in four formats, analyzes recurring outgoing expenses, and presents the results in a polished React UI.
+Your task: build or extend Ghostbill so it accepts transaction files in four formats, analyzes repeated outgoing expenses, and presents the results in a polished React UI.
 
 ---
 
@@ -17,22 +17,22 @@ Simplicity > abstraction
 ## Product Context
 
 ### What Ghostbill Does
-Ghostbill is an expense-awareness tool that helps users identify recurring outgoing charges they may have forgotten about — especially subscriptions and repeat expenses that quietly drain money over time.
+Ghostbill is an expense-awareness tool that helps users identify repeated outgoing charges they may have forgotten about — especially subscriptions and repeat expenses that quietly drain money over time.
 
 The user uploads a transaction export or bank statement (`.csv`, `.xlsx`, `.json`, or text-based `.pdf`). Ghostbill analyzes the transactions and surfaces:
 - **Ghosts** — consistent timing and amount; likely a forgotten subscription
 - **Regulars** — expected variation; bills the user probably recognises
 
 ### Core Product Rules
-- Focus on recurring outgoing expenses only — not income, savings, or general finance
+- Focus on repeated outgoing expenses only — not income, savings, or general finance
 - Credits, income, refunds, and positive cash-flow entries are excluded from all analysis
 - "Ghost" = likely forgotten or overlooked, not fraudulent
-- The recurring pattern matters — isolated one-off transactions are not surfaced
+- The repeated pattern matters — isolated one-off transactions are not surfaced
 - Equivalent transaction data must produce equivalent analysis results regardless of format
 
 ### What the User Sees
 - A merchant list grouped into Ghost / Regular sections
-- A timeline panel with the 8 most recent individual recurring charges
+- A timeline panel with the 8 most recent individual repeated charges
 - A "New · may be a trial" badge on ghost merchants whose first charge was within the last 60 days
 - Clear feedback for unsupported or unparseable files
 
@@ -230,7 +230,12 @@ Files with headers not on this list will fail to map.
 
 ### Component Responsibilities
 
-**`ITransactionFileParser`:** defines `CanHandle(extension)` and `Parse()`. No parsing logic, no business logic, no resolution.
+**`ITransactionFileParser`:** exact interface (do not alter):
+```csharp
+bool CanHandle(string extension);
+IReadOnlyList<Transaction> Parse(Stream stream, string fileName);
+```
+No parsing logic, no business logic, no resolution.
 
 **`ParserResolutionService`:** resolves parser by `CanHandle(extension)` only — deterministic and order-independent.
 - 0 matches → `UNSUPPORTED_FORMAT`
@@ -240,8 +245,14 @@ Files with headers not on this list will fail to map.
 **`CsvFileParserAdapter`:** pure pass-through to `CsvParsingService`. No transformation of any kind.
 
 **`ExcelParsingService`:** reads first worksheet via ClosedXML. Uses shared helpers only for translation. No business logic.
+Required access pattern: `workbook.Worksheet(1)` (1-based) → `worksheet.RangeUsed()` (null → return `[]`) → `range.RowsUsed()` → `cell.GetFormattedString()` (not `.Value?.ToString()`).
 
-**`JsonParsingService`:** reads UTF-8/BOM JSON. Supports only the two root shapes above. Unsupported shapes → `PARSE_ERROR`. No business logic.
+**`JsonParsingService`:** reads JSON directly — does NOT use `RowMaterializationService`. Creates Transaction objects inline.
+- Stream: `new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true)` (automatic BOM handling)
+- Number amounts: `element.GetDecimal().ToString(CultureInfo.InvariantCulture)` before `ParseAmount`
+- Missing required property → throw `PARSE_ERROR` (does not skip; whole file fails)
+- Property matching: `StringComparer.OrdinalIgnoreCase`
+- Unsupported root shape → `PARSE_ERROR`
 
 **`PdfParsingService` (Orchestrator Only):**
 - Runs strategies in fixed precedence: `ColumnLayout` → `SequentialTable` → `RegexRow`
@@ -270,6 +281,76 @@ Each strategy: iterates pages internally; returns `true` + rows on success; `fal
 **`PdfRowFilter`:** `LooksLikeHeader()` and `LooksLikeNoise()` — used by all strategies before yielding a candidate row.
 
 **Shared helpers:** do not depend on `CsvParsingService`; do not contain analysis logic.
+
+### Parsing Reference Specification
+
+These values are authoritative. Implement exactly as stated.
+
+**Encoding handling** — apply to all text-based parsers (XLSX, JSON; CSV is frozen):
+- Try UTF-8 with strict validation: `new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)`
+- On `DecoderFallbackException` → retry as Windows-1252: `Encoding.GetEncoding(1252)`
+- Register `Encoding.RegisterProvider(CodePagesEncodingProvider.Instance)` before first use
+- XLSX: ClosedXML handles encoding internally — no action needed
+- PDF: PdfPig extracts Unicode text — no action needed
+
+**Headerless file fallback** (XLSX; CSV is frozen but follows the same pattern):
+- If `HeaderDetectionService` returns `null` → positional mapping: column 0 = Date, column 1 = Description, column 2 = Amount
+- Fewer than 3 columns → throw `PARSE_ERROR`
+- JSON: no header concept; property-name mapping always applies
+
+**Row materialization failure policy (`RowMaterializationService`):**
+- Unparseable date or amount → catch `FormatException` → skip row → record in `skippedReasons`
+- Missing description → empty string; do not skip
+- Never throw on a single bad row
+
+**JSON root shapes — case-insensitive property matching. Any other shape → `PARSE_ERROR`:**
+
+Shape A — top-level array:
+```json
+[{ "date": "2024-01-15", "description": "Netflix", "amount": -149.00 }]
+```
+
+Shape B — object with `transactions` key:
+```json
+{ "transactions": [{ "date": "2024-01-15", "description": "Netflix", "amount": -149.00 }] }
+```
+
+**`PdfRowFilter` — exact token lists** (applied after `HeaderNormalization.Normalize()` = lowercase + trim + diacritic-strip):
+
+| Method | Match type | Tokens |
+|--------|-----------|--------|
+| `LooksLikeHeader` | Exact | `beskrivning`, `referens`, `belopp`, `bokfortsaldo`, `transaktionsdag`, `bokforingsdag`, `valutadag` |
+| `LooksLikeNoise` | Prefix | `saldo`, `kontohavare`, `privatkonto`, `transaktioner`, `skapad` |
+| `LooksLikeNoise` | Exact | `sek` |
+
+**PDF strategy constants — exact values required:**
+
+`ColumnLayoutPdfStrategy` bounding-box constants:
+```
+RowTolerance = 2.5
+BookingDateLeft=145, BookingDateRight=205
+TransactionDateLeft=205, TransactionDateRight=260
+ValueDateLeft=260, ValueDateRight=312
+DescriptionLeft=312, DescriptionRight=438
+AmountLeft=438, AmountRight=490
+Word filter: BoundingBox.Left >= 141 (BookingDateLeft - 4)
+Date validation: ^\d{4}-\d{2}-\d{2}$
+Date priority: transactionDate → bookingDate → valueDate (FirstNonEmpty)
+```
+
+`SequentialTablePdfStrategy` regex patterns:
+```
+AnyDateRegex:         \d{4}-\d{2}-\d{2}
+SequentialRecordRegex: (?<date>\d{4}-\d{2}-\d{2})(?<description>.*?)(?<transactionId>TXN\d+)(?<type>Debit|Credit)(?<amount>[\+\-]?\d[\d,\.]*)(?<currency>[A-Z]{3})(?<balance>[\+\-]?\d[\d,\.]*)(?=(?:\d{4}-\d{2}-\d{2})|$)
+```
+
+`RegexRowPdfStrategy` regex patterns (two passes: raw lines + whitespace-normalized full-page text):
+```
+WhitespaceRegex:      \s+
+TransactionLineRegex: (?<date>\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|[A-Za-z]{3}\s+\d{1,2},?\s+\d{4})\s+(?<description>[A-Za-z][A-Za-z\s&'\-]+?)\s+(?<amount>\(?-?[$€£]?\d[\d,\.]*\)?)\s*(?=(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4}|[A-Za-z]{3}\s+\d{1,2},?\s+\d{4})|$)
+```
+
+All PDF strategy classes must be `sealed partial class` and use `[GeneratedRegex]` source generation.
 
 ### Analysis Algorithm (Authoritative — Do Not Change)
 
@@ -427,7 +508,7 @@ Skeleton placeholders during loading.
 ### Timeline Panel — "Recent Recurring Charges"
 Render below the merchant list when `result` is present. Do not render when there are no results.
 
-- **Heading:** "Recent recurring charges"
+- **Heading:** "Recent repeated charges"
 - **Content:** 8 most recent transactions from all groups, sorted by `transaction.date` descending
 - **Each card:** merchant name · amount in SEK (absolute value) · date as "MMM D" in user's local timezone
 - **Layout:** horizontal scrollable grid
