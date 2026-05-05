@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ghostbill Backend V2"
+  short_description: "Ghostbill backend parsing and analysis guide"
+  default_prompt: "Use $ghostbill-backend-v2 to extend Ghostbill backend parsing and analysis from the promptvolume2 backend spec."

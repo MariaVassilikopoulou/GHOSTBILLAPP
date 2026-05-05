@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ghostbill Fullstack V2"
+  short_description: "End-to-end Ghostbill implementation guide"
+  default_prompt: "Use $ghostbill-fullstack-v2 to implement Ghostbill end to end from the promptvolume2 fullstack spec."

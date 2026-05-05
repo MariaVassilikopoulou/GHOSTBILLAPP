@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ghostbill Frontend V2"
+  short_description: "Ghostbill React UI implementation guide"
+  default_prompt: "Use $ghostbill-frontend-v2 to build the Ghostbill React UI from the promptvolume2 frontend spec."
