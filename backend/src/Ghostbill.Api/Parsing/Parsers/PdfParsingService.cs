@@ -10,7 +10,7 @@ namespace Ghostbill.Api.Parsing.Parsers;
 
 public sealed partial class PdfParsingService(RowMaterializationService rowMaterializationService) : ITransactionFileParser
 {
-    private const double RowTolerance = 2.5;
+    private const double RowTolerance = 5.0;
     private const double BookingDateLeft = 145;
     private const double BookingDateRight = 205;
     private const double TransactionDateLeft = 205;
@@ -106,6 +106,33 @@ public sealed partial class PdfParsingService(RowMaterializationService rowMater
             var amount = JoinWords(orderedWords, AmountLeft, AmountRight, preserveSpacing: false);
 
             var date = FirstNonEmpty(transactionDate, bookingDate, valueDate);
+
+            // Fallback: if amount not found by coordinate bounds, scan the row for a
+            // Swedish-format numeric token — handles cases where XObject coordinate
+            // transformations shift the amount word outside the expected x-range.
+            if (string.IsNullOrWhiteSpace(amount))
+            {
+                var candidates = orderedWords
+                    .Select(w => w.Text.Trim())
+                    .Where(t => SwedishAmountRegex().IsMatch(t))
+                    .ToArray();
+                // Prefer negative tokens (expense amounts) to avoid picking the balance
+                amount = candidates.FirstOrDefault(t => t.StartsWith("-"))
+                    ?? candidates.FirstOrDefault()
+                    ?? string.Empty;
+            }
+
+            // Fallback: if description not found by coordinate bounds, take all words
+            // that are not dates and not amounts — same XObject coordinate issue.
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                description = string.Join(" ", orderedWords
+                    .Where(w => !DatePatternRegex().IsMatch(w.Text.Trim()))
+                    .Where(w => !SwedishAmountRegex().IsMatch(w.Text.Trim()))
+                    .Select(w => w.Text.Trim())
+                    .Where(w => w.Length > 0));
+            }
+
             if (!DatePatternRegex().IsMatch(date) || string.IsNullOrWhiteSpace(description) || string.IsNullOrWhiteSpace(amount))
             {
                 continue;
@@ -221,6 +248,11 @@ public sealed partial class PdfParsingService(RowMaterializationService rowMater
 
     [GeneratedRegex(@"\s+", RegexOptions.Compiled)]
     private static partial Regex WhitespaceRegex();
+
+    // Matches Swedish-format amounts: optional minus, digits and spaces, comma, two decimals
+    // e.g. -322,35 / 1 113,16 / -4 500,00
+    [GeneratedRegex(@"^-?[\d ]+,\d{2}$", RegexOptions.Compiled)]
+    private static partial Regex SwedishAmountRegex();
 
     private sealed class PdfRow(double bottom)
     {
