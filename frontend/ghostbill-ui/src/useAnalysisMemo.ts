@@ -1,6 +1,14 @@
 import { useMemo } from "react";
 import { AnalysisResult, RecurringExpenseGroup } from "./services/api";
 
+function annualMultiplier(cadenceDays: number): number {
+  if (cadenceDays <= 10) return 52;
+  if (cadenceDays <= 45) return 12;
+  if (cadenceDays <= 100) return 4;
+  if (cadenceDays <= 200) return 2;
+  return 1;
+}
+
 export type MerchantRowModel = RecurringExpenseGroup & {
   rank: number;
   spendShare: number;
@@ -30,7 +38,7 @@ export function useAnalysisMemo(result: AnalysisResult | null, prevGhostNames: S
         ...group,
         rank: index + 1,
         spendShare: groups[0] ? group.totalAmount / groups[0].totalAmount : 0,
-        annualCost: Math.round(group.averageAmount * (365 / group.cadenceDays)),
+        annualCost: Math.round(group.averageAmount * annualMultiplier(group.cadenceDays)),
         monthsRunning: Math.max(1, Math.round((group.occurrences * group.cadenceDays) / 30)),
         priceDrift: group.trend.length >= 2
           ? Math.round(((group.trend[group.trend.length - 1].amount - group.trend[0].amount) / group.trend[0].amount) * 100)
@@ -51,12 +59,12 @@ export function useAnalysisMemo(result: AnalysisResult | null, prevGhostNames: S
       regularMerchants,
       maxSpend: merchants[0]?.totalAmount ?? 0,
       monthlyGhostSpend: result.ghosts.reduce(
-        (sum, ghost) => sum + ghost.averageAmount * (30 / ghost.cadenceDays),
+        (sum, ghost) => sum + Math.round(ghost.averageAmount * annualMultiplier(ghost.cadenceDays)) / 12,
         0,
       ),
       totalRecurringSpend: merchants.reduce((sum, merchant) => sum + merchant.totalAmount, 0),
       annualGhostCost: result.ghosts.reduce(
-        (sum, ghost) => sum + Math.round(ghost.averageAmount * (365 / ghost.cadenceDays)),
+        (sum, ghost) => sum + Math.round(ghost.averageAmount * annualMultiplier(ghost.cadenceDays)),
         0,
       ),
     };
